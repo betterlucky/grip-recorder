@@ -2,6 +2,7 @@ package com.grippulltester;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -61,6 +62,7 @@ public class MainActivity extends Activity implements RecognitionListener {
     private static final String EXPORT_FOLDER = "GripRecorderData";
     private static final String[] HAND_OPTIONS = {"left", "right"};
     private static final String[] PROTOCOL_OPTIONS = {"check_1", "check_2", "short_evidence_5", "full_protocol_10", "custom"};
+    private static final int COUNTDOWN_SECONDS = 3;
     private static final int MIN_SECONDS = 1;
     private static final int MAX_REPS = 100;
 
@@ -81,6 +83,7 @@ public class MainActivity extends Activity implements RecognitionListener {
     private TextView latestText;
     private TextView speechText;
     private TextView speechStatusText;
+    private TextView valuesTitleText;
     private LinearLayout valuesList;
     private LinearLayout settingsPanel;
     private EditText repsInput;
@@ -94,9 +97,11 @@ public class MainActivity extends Activity implements RecognitionListener {
     private LinearLayout advancedPanel;
     private Switch showValuesSwitch;
     private Switch voiceSwitch;
+    private Switch lowFeedbackSwitch;
     private Button startButton;
     private Button stopButton;
     private Button exportButton;
+    private Button micCheckButton;
 
     private Phase phase = Phase.IDLE;
     private int totalReps = DEFAULT_REPS;
@@ -109,11 +114,13 @@ public class MainActivity extends Activity implements RecognitionListener {
     private Date sessionStartedAt = null;
     private String sessionId = "";
     private int currentRep = 0;
+    private int countdownRemaining = COUNTDOWN_SECONDS;
     private long phaseStartMs = 0L;
     private boolean listening = false;
     private boolean sessionActive = false;
     private boolean sessionComplete = false;
     private boolean advancedVisible = false;
+    private boolean lowFeedbackMode = false;
     private boolean voskReady = false;
     private String lastVoiceStatus = "ready";
 
@@ -133,6 +140,27 @@ public class MainActivity extends Activity implements RecognitionListener {
 
             updateTimer(durationMs - elapsedMs);
             handler.postDelayed(this, 80);
+        }
+    };
+
+    private final Runnable countdownTick = new Runnable() {
+        @Override
+        public void run() {
+            if (!sessionActive || phase != Phase.COUNTDOWN) {
+                return;
+            }
+
+            if (countdownRemaining <= 0) {
+                startPullPhase();
+                return;
+            }
+
+            timerText.setText(String.valueOf(countdownRemaining));
+            phaseText.setText("READY");
+            repText.setText("Starting soon");
+            speak(String.valueOf(countdownRemaining));
+            countdownRemaining--;
+            handler.postDelayed(this, 1000);
         }
     };
 
@@ -229,8 +257,8 @@ public class MainActivity extends Activity implements RecognitionListener {
         buttonRow.setGravity(Gravity.CENTER);
         root.addView(buttonRow, topMargin(matchWrap(), 16));
 
-        startButton = makeButton("Start Session");
-        startButton.setOnClickListener(v -> startSession());
+        startButton = makeButton("Get Ready");
+        startButton.setOnClickListener(v -> getReady());
         buttonRow.addView(startButton, weightedButton());
 
         stopButton = makeButton("Stop");
@@ -264,6 +292,16 @@ public class MainActivity extends Activity implements RecognitionListener {
 
         handSpinner = addSpinnerField(metadataFields, "Hand", HAND_OPTIONS, hand);
         protocolSpinner = addSpinnerField(metadataFields, "Protocol", PROTOCOL_OPTIONS, protocolLabel);
+        protocolSpinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                applyProtocolPreset(PROTOCOL_OPTIONS[position]);
+            }
+
+            @Override
+            public void onNothingSelected(android.widget.AdapterView<?> parent) {
+            }
+        });
 
         advancedButton = makeButton("Advanced settings");
         advancedButton.setOnClickListener(v -> toggleAdvancedPanel());
@@ -300,9 +338,24 @@ public class MainActivity extends Activity implements RecognitionListener {
         voiceSwitch.setOnCheckedChangeListener(this::onVoiceToggle);
         settingsPanel.addView(voiceSwitch, topMargin(matchWrap(), 2));
 
-        TextView valuesTitle = makeText("Values", 18, text, Gravity.NO_GRAVITY);
-        valuesTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        root.addView(valuesTitle, topMargin(matchWrap(), 18));
+        lowFeedbackSwitch = new Switch(this);
+        lowFeedbackSwitch.setText("Low feedback mode");
+        lowFeedbackSwitch.setTextColor(text);
+        lowFeedbackSwitch.setTextSize(16);
+        lowFeedbackSwitch.setChecked(prefs.getBoolean("low_feedback", false));
+        lowFeedbackSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            lowFeedbackMode = isChecked;
+            prefs.edit().putBoolean("low_feedback", isChecked).apply();
+        });
+        settingsPanel.addView(lowFeedbackSwitch, topMargin(matchWrap(), 2));
+
+        micCheckButton = makeButton("Mic Check");
+        micCheckButton.setOnClickListener(v -> startMicCheck());
+        settingsPanel.addView(micCheckButton, topMargin(matchWrap(), 8));
+
+        valuesTitleText = makeText("Values", 18, text, Gravity.NO_GRAVITY);
+        valuesTitleText.setTypeface(null, android.graphics.Typeface.BOLD);
+        root.addView(valuesTitleText, topMargin(matchWrap(), 18));
 
         valuesList = new LinearLayout(this);
         valuesList.setOrientation(LinearLayout.VERTICAL);
@@ -321,6 +374,65 @@ public class MainActivity extends Activity implements RecognitionListener {
             initVoskIfPermitted();
         }
         updateSpeechStatus();
+    }
+
+    private void applyProtocolPreset(String protocol) {
+        if (protocol == null || protocol.equals("custom")) {
+            return;
+        }
+
+        int reps;
+        switch (protocol) {
+            case "check_1":
+                reps = 1;
+                break;
+            case "check_2":
+                reps = 2;
+                break;
+            case "short_evidence_5":
+                reps = 5;
+                break;
+            case "full_protocol_10":
+                reps = 10;
+                break;
+            default:
+                return;
+        }
+
+        totalReps = reps;
+        pullSeconds = DEFAULT_PULL_SECONDS;
+        restSeconds = DEFAULT_REST_SECONDS;
+        if (repsInput != null && pullInput != null && restInput != null) {
+            repsInput.setText(String.valueOf(totalReps));
+            pullInput.setText(String.valueOf(pullSeconds));
+            restInput.setText(String.valueOf(restSeconds));
+        }
+    }
+
+    private void startMicCheck() {
+        if (sessionActive) {
+            return;
+        }
+        if (!voiceSwitch.isChecked()) {
+            Toast.makeText(this, "Turn on voice capture to run mic check.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (voiceSwitch.isChecked() && !hasAudioPermission()) {
+            requestAudioPermissionIfNeeded();
+            Toast.makeText(this, "Microphone permission is needed for mic check.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (voiceSwitch.isChecked() && !ensureVoskService()) {
+            Toast.makeText(this, "Voice model is still loading. Try again in a moment.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        phase = Phase.MIC_CHECK;
+        phaseText.setText("MIC");
+        repText.setText("Say a test value");
+        latestText.setText("Latest: -");
+        speechText.setText("Listening for a number");
+        startListening();
     }
 
     private void toggleAdvancedPanel() {
@@ -386,14 +498,26 @@ public class MainActivity extends Activity implements RecognitionListener {
 
     private String buildVoskGrammar() {
         ArrayList<String> phrases = new ArrayList<>();
+        phrases.add("start");
+        phrases.add("stop");
         phrases.add("wrong");
         phrases.add("incorrect");
         phrases.add("mistake");
+        phrases.add("a half");
+        phrases.add("one half");
+        phrases.add("a quarter");
+        phrases.add("one quarter");
+        phrases.add("three quarters");
         for (int i = 0; i <= 200; i++) {
             String words = numberToWords(i);
             phrases.add(words);
             phrases.add(words + " kilograms");
             phrases.add(words + " kg");
+            phrases.add(words + " and a half");
+            phrases.add(words + " and one half");
+            phrases.add(words + " and a quarter");
+            phrases.add(words + " and one quarter");
+            phrases.add(words + " and three quarters");
             for (int decimal = 0; decimal <= 9; decimal++) {
                 phrases.add(words + " point " + numberToWords(decimal));
             }
@@ -435,7 +559,7 @@ public class MainActivity extends Activity implements RecognitionListener {
         return "two hundred";
     }
 
-    private void startSession() {
+    private void getReady() {
         saveSettingsFromInputs();
         if (voiceSwitch.isChecked() && !hasAudioPermission()) {
             requestAudioPermissionIfNeeded();
@@ -463,19 +587,33 @@ public class MainActivity extends Activity implements RecognitionListener {
         setSettingsEnabled(false);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         renderValuesList();
-        startPullPhase();
+        applyActiveVisibility();
+        phase = Phase.READY;
+        phaseText.setText("READY");
+        phaseText.setTextColor(Color.rgb(17, 20, 18));
+        repText.setText("Say start");
+        timerText.setText(String.valueOf(COUNTDOWN_SECONDS));
+        latestText.setText("Latest: -");
+        speechText.setText(voiceSwitch.isChecked() ? "Say start to begin" : "Starting");
+        if (voiceSwitch.isChecked()) {
+            startListening();
+        } else {
+            beginCountdown();
+        }
     }
 
     private void stopSession(boolean completed) {
         sessionActive = false;
         sessionComplete = completed;
         handler.removeCallbacks(tick);
+        handler.removeCallbacks(countdownTick);
         stopListening();
         startButton.setEnabled(true);
         stopButton.setEnabled(false);
         exportButton.setEnabled(!entries.isEmpty());
         settingsPanel.setEnabled(true);
         setSettingsEnabled(true);
+        restoreIdleVisibility();
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         if (completed) {
@@ -484,17 +622,64 @@ public class MainActivity extends Activity implements RecognitionListener {
             phaseText.setTextColor(Color.rgb(14, 124, 102));
             timerText.setText("0.0");
             repText.setText("Session complete");
+            speechText.setText("Complete. Export CSV when ready.");
             speak("Done");
+            showCompletePrompt();
         } else {
             phase = Phase.IDLE;
             updateIdleUi();
         }
     }
 
+    private void beginCountdown() {
+        if (!sessionActive) {
+            return;
+        }
+        phase = Phase.COUNTDOWN;
+        countdownRemaining = COUNTDOWN_SECONDS;
+        speechText.setText("Countdown started");
+        handler.removeCallbacks(countdownTick);
+        handler.post(countdownTick);
+    }
+
+    private void applyActiveVisibility() {
+        if (!lowFeedbackMode) {
+            return;
+        }
+        startButton.setVisibility(View.GONE);
+        exportButton.setVisibility(View.GONE);
+        settingsPanel.setVisibility(View.GONE);
+        valuesTitleText.setVisibility(View.GONE);
+        valuesList.setVisibility(View.GONE);
+        speechStatusText.setVisibility(View.GONE);
+        speechText.setVisibility(View.GONE);
+    }
+
+    private void restoreIdleVisibility() {
+        startButton.setVisibility(View.VISIBLE);
+        exportButton.setVisibility(View.VISIBLE);
+        settingsPanel.setVisibility(View.VISIBLE);
+        speechStatusText.setVisibility(View.VISIBLE);
+        speechText.setVisibility(View.VISIBLE);
+        valuesTitleText.setVisibility(View.VISIBLE);
+        valuesList.setVisibility(showValuesSwitch.isChecked() ? View.VISIBLE : View.GONE);
+    }
+
+    private void showCompletePrompt() {
+        if (isFinishing()) {
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Session complete")
+                .setMessage("Export this grip session now?")
+                .setPositiveButton("Export CSV", (dialog, which) -> exportCsv())
+                .setNegativeButton("Later", null)
+                .show();
+    }
+
     private void startPullPhase() {
         phase = Phase.PULL;
         phaseStartMs = SystemClock.elapsedRealtime();
-        stopListening();
         phaseText.setText("PULL");
         phaseText.setTextColor(Color.rgb(201, 55, 44));
         repText.setText("Rep " + (currentRep + 1) + " of " + totalReps);
@@ -525,7 +710,7 @@ public class MainActivity extends Activity implements RecognitionListener {
         }
 
         if (phase == Phase.REST) {
-            stopListening();
+            markCurrentRepMissedIfNeeded();
             currentRep++;
             if (currentRep >= totalReps) {
                 stopSession(true);
@@ -578,12 +763,28 @@ public class MainActivity extends Activity implements RecognitionListener {
     }
 
     private void handleSpeechText(String speech, boolean partial) {
-        if (speech == null || speech.isEmpty() || phase != Phase.REST || currentRep < 0 || currentRep >= entries.size()) {
+        if (speech == null || speech.isEmpty()) {
             return;
         }
 
         lastVoiceStatus = partial ? "partial result" : "captured";
         speechText.setText(partial ? "Heard: " + speech : "Captured: " + speech);
+        if (!partial && containsStop(speech) && (sessionActive || phase == Phase.MIC_CHECK)) {
+            stopSession(false);
+            return;
+        }
+        if (!partial && phase == Phase.READY && containsStart(speech)) {
+            beginCountdown();
+            return;
+        }
+        if (phase == Phase.MIC_CHECK) {
+            handleMicCheckSpeech(speech);
+            return;
+        }
+        if (phase != Phase.REST || currentRep < 0 || currentRep >= entries.size()) {
+            return;
+        }
+
         RepEntry entry = entries.get(currentRep);
 
         if (containsWrong(speech)) {
@@ -593,6 +794,7 @@ public class MainActivity extends Activity implements RecognitionListener {
         String numeric = extractNumber(speech);
         if (numeric != null && !numeric.isEmpty()) {
             entry.value = numeric;
+            entry.missed = false;
             entry.rawSpeech = speech;
             latestText.setText("Latest: " + numeric + " kg" + (entry.flagged ? "  FLAGGED" : ""));
         } else if (entry.flagged) {
@@ -603,9 +805,42 @@ public class MainActivity extends Activity implements RecognitionListener {
         renderValuesList();
     }
 
+    private void handleMicCheckSpeech(String speech) {
+        String numeric = extractNumber(speech);
+        if (numeric != null && !numeric.isEmpty()) {
+            latestText.setText("Mic: " + numeric + " kg");
+            speechText.setText("Mic check heard: " + numeric);
+            stopListening();
+            phase = Phase.IDLE;
+            updateSpeechStatus();
+        }
+    }
+
+    private boolean containsStart(String text) {
+        String normalized = " " + text.toLowerCase(Locale.UK).replaceAll("[^a-z0-9. -]", " ") + " ";
+        return normalized.contains(" start ");
+    }
+
+    private boolean containsStop(String text) {
+        String normalized = " " + text.toLowerCase(Locale.UK).replaceAll("[^a-z0-9. -]", " ") + " ";
+        return normalized.contains(" stop ");
+    }
+
     private boolean containsWrong(String text) {
         String normalized = " " + text.toLowerCase(Locale.UK).replaceAll("[^a-z0-9. -]", " ") + " ";
         return normalized.contains(" wrong ") || normalized.contains(" incorrect ") || normalized.contains(" mistake ");
+    }
+
+    private void markCurrentRepMissedIfNeeded() {
+        if (currentRep < 0 || currentRep >= entries.size()) {
+            return;
+        }
+        RepEntry entry = entries.get(currentRep);
+        if (entry.value == null || entry.value.trim().isEmpty()) {
+            entry.missed = true;
+            speechText.setText("Missed rep " + entry.rep);
+            renderValuesList();
+        }
     }
 
     private String extractNumber(String text) {
@@ -617,11 +852,43 @@ public class MainActivity extends Activity implements RecognitionListener {
             return trimNumber(numeric.group());
         }
 
+        Double fractionalWords = parseFractionalWords(normalized);
+        if (fractionalWords != null) {
+            return trimNumber(String.format(Locale.UK, "%.2f", fractionalWords));
+        }
+
         Double words = parseNumberWords(normalized);
         if (words != null) {
             return trimNumber(String.format(Locale.UK, "%.2f", words));
         }
         return null;
+    }
+
+    private Double parseFractionalWords(String text) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("^(.*?)(?:\\band\\s+)?(?:(a|one|three)\\s+)?(half|quarter|quarters)\\b.*$")
+                .matcher(text.replace('-', ' '));
+        if (!matcher.matches()) {
+            return null;
+        }
+
+        String wholePart = matcher.group(1).trim().replaceAll("\\band\\s*$", "").trim();
+        String fractionCount = matcher.group(2);
+        String fractionUnit = matcher.group(3);
+        double fraction;
+        if ("half".equals(fractionUnit)) {
+            fraction = 0.5;
+        } else if ("three".equals(fractionCount)) {
+            fraction = 0.75;
+        } else {
+            fraction = 0.25;
+        }
+
+        if (wholePart.isEmpty()) {
+            return fraction;
+        }
+        Double whole = parseNumberWords(wholePart);
+        return whole == null ? null : whole + fraction;
     }
 
     private Double parseNumberWords(String text) {
@@ -703,13 +970,13 @@ public class MainActivity extends Activity implements RecognitionListener {
 
             EditText value = new EditText(this);
             value.setText(entry.value);
-            value.setHint("value");
+            value.setHint(entry.missed ? "missed" : "value");
             value.setSingleLine(true);
             value.setTextSize(17);
             value.setTextColor(text);
             value.setHintTextColor(Color.rgb(135, 142, 137));
             value.setPadding(dp(10), 0, dp(10), 0);
-            value.setBackground(fieldBackground(Color.WHITE, Color.rgb(194, 199, 195)));
+            value.setBackground(fieldBackground(entry.missed ? Color.rgb(255, 240, 238) : Color.WHITE, entry.missed ? Color.rgb(201, 55, 44) : Color.rgb(194, 199, 195)));
             value.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED);
             value.setSelectAllOnFocus(false);
             value.setFocusable(!sessionActive);
@@ -729,6 +996,9 @@ public class MainActivity extends Activity implements RecognitionListener {
                 @Override
                 public void onTextChanged(CharSequence s, int start, int before, int count) {
                     entry.value = s.toString().trim();
+                    if (!entry.value.isEmpty()) {
+                        entry.missed = false;
+                    }
                     if (!sessionActive) {
                         updateLatestFromEntries();
                     }
@@ -908,6 +1178,7 @@ public class MainActivity extends Activity implements RecognitionListener {
         protocolLabel = normalizeOption(prefs.getString("protocol_label", DEFAULT_PROTOCOL), PROTOCOL_OPTIONS, DEFAULT_PROTOCOL);
         setNumber = prefs.getString("set_number", "1");
         restGapMinutes = prefs.getString("rest_gap_minutes", "");
+        lowFeedbackMode = prefs.getBoolean("low_feedback", false);
     }
 
     private void setSettingsEnabled(boolean enabled) {
@@ -921,6 +1192,8 @@ public class MainActivity extends Activity implements RecognitionListener {
         restGapInput.setEnabled(enabled);
         showValuesSwitch.setEnabled(enabled);
         voiceSwitch.setEnabled(enabled);
+        lowFeedbackSwitch.setEnabled(enabled);
+        micCheckButton.setEnabled(enabled);
     }
 
     private void updateIdleUi() {
@@ -1210,8 +1483,11 @@ public class MainActivity extends Activity implements RecognitionListener {
 
     private enum Phase {
         IDLE,
+        READY,
+        COUNTDOWN,
         PULL,
         REST,
+        MIC_CHECK,
         COMPLETE
     }
 
@@ -1220,6 +1496,7 @@ public class MainActivity extends Activity implements RecognitionListener {
         String value = "";
         String rawSpeech = "";
         boolean flagged = false;
+        boolean missed = false;
 
         RepEntry(int rep) {
             this.rep = rep;

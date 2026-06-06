@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "project": "Grip Recorder",
+  "enabled": true,
+  "scope": "changed-files",
+  "privacy": "local-first",
+  "commands": {
+    "install": "",
+    "lint": "",
+    "test": "",
+    "build": "./gradlew assembleDebug"
+  },
+  "paths": {
+    "include": [],
+    "exclude": [
+      "node_modules/**",
+      "dist/**",
+      "coverage/**",
+      ".env",
+      ".vercel/**"
+    ]
+  },
+  "models": {
+    "primary": "codex",
+    "fallback": [
+      "gemini",
+      "local-qwen"
+    ]
+  }
+}
