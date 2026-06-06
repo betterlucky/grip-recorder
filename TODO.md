@@ -11,6 +11,11 @@
 - Add a missed-value indicator for reps where no value was captured.
 - Add a test-complete export prompt after the final rep.
 - Add a countdown before the first pull.
+- Add a voice-activated start flow:
+  - Change **Start Session** to **Get Ready**.
+  - After tapping **Get Ready**, listen for `start`.
+  - Saying `start` begins the initial countdown.
+  - During a ready/session state, saying `stop` can end the session early.
 - Add a low-feedback mode that hides settings/buttons during an active session, leaving only phase, timer, latest value, and stop.
 - Add support for common fractional phrases if needed, such as `three quarters`.
 - Add an optional pre-test microphone check.
