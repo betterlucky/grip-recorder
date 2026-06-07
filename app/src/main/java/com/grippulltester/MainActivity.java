@@ -207,10 +207,11 @@ public class MainActivity extends Activity implements RecognitionListener {
 
         ScrollView scrollView = new ScrollView(this);
         scrollView.setFillViewport(true);
+        scrollView.setClipToPadding(false);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(18), dp(14), dp(18), dp(18));
+        root.setPadding(dp(18), dp(14), dp(18), dp(140));
         root.setBackgroundColor(background);
         scrollView.addView(root, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT,
@@ -257,7 +258,7 @@ public class MainActivity extends Activity implements RecognitionListener {
         buttonRow.setGravity(Gravity.CENTER);
         root.addView(buttonRow, topMargin(matchWrap(), 16));
 
-        startButton = makeButton("Get Ready");
+        startButton = makeButton("Start");
         startButton.setOnClickListener(v -> getReady());
         buttonRow.addView(startButton, weightedButton());
 
@@ -498,8 +499,6 @@ public class MainActivity extends Activity implements RecognitionListener {
 
     private String buildVoskGrammar() {
         ArrayList<String> phrases = new ArrayList<>();
-        phrases.add("start");
-        phrases.add("stop");
         phrases.add("wrong");
         phrases.add("incorrect");
         phrases.add("mistake");
@@ -588,18 +587,14 @@ public class MainActivity extends Activity implements RecognitionListener {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         renderValuesList();
         applyActiveVisibility();
-        phase = Phase.READY;
+        phase = Phase.COUNTDOWN;
         phaseText.setText("READY");
         phaseText.setTextColor(Color.rgb(17, 20, 18));
-        repText.setText("Say start");
+        repText.setText("Starting soon");
         timerText.setText(String.valueOf(COUNTDOWN_SECONDS));
         latestText.setText("Latest: -");
-        speechText.setText(voiceSwitch.isChecked() ? "Say start to begin" : "Starting");
-        if (voiceSwitch.isChecked()) {
-            startListening();
-        } else {
-            beginCountdown();
-        }
+        speechText.setText("Countdown started");
+        beginCountdown();
     }
 
     private void stopSession(boolean completed) {
@@ -614,6 +609,7 @@ public class MainActivity extends Activity implements RecognitionListener {
         settingsPanel.setEnabled(true);
         setSettingsEnabled(true);
         restoreIdleVisibility();
+        renderValuesList();
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         if (completed) {
@@ -769,12 +765,7 @@ public class MainActivity extends Activity implements RecognitionListener {
 
         lastVoiceStatus = partial ? "partial result" : "captured";
         speechText.setText(partial ? "Heard: " + speech : "Captured: " + speech);
-        if (!partial && containsStop(speech) && (sessionActive || phase == Phase.MIC_CHECK)) {
-            stopSession(false);
-            return;
-        }
-        if (!partial && phase == Phase.READY && containsStart(speech)) {
-            beginCountdown();
+        if (partial) {
             return;
         }
         if (phase == Phase.MIC_CHECK) {
@@ -814,16 +805,6 @@ public class MainActivity extends Activity implements RecognitionListener {
             phase = Phase.IDLE;
             updateSpeechStatus();
         }
-    }
-
-    private boolean containsStart(String text) {
-        String normalized = " " + text.toLowerCase(Locale.UK).replaceAll("[^a-z0-9. -]", " ") + " ";
-        return normalized.contains(" start ");
-    }
-
-    private boolean containsStop(String text) {
-        String normalized = " " + text.toLowerCase(Locale.UK).replaceAll("[^a-z0-9. -]", " ") + " ";
-        return normalized.contains(" stop ");
     }
 
     private boolean containsWrong(String text) {
@@ -1483,7 +1464,6 @@ public class MainActivity extends Activity implements RecognitionListener {
 
     private enum Phase {
         IDLE,
-        READY,
         COUNTDOWN,
         PULL,
         REST,

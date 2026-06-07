@@ -7,13 +7,12 @@ CSV files for Lodestone or another system to import and own as durable history.
 
 ## Current Flow
 
-- Tap **Get Ready** once.
-- Say **start** to begin the countdown. If voice capture is off, the countdown starts automatically.
+- Tap **Start** once.
 - The app counts down from 3 before the first pull.
 - The app signals **Pull** for the configured pull duration, defaulting to 3 seconds.
 - The app switches to **Rest** for the configured rest duration, defaulting to 5 seconds.
 - During rest, say the value shown on the dynamometer. Whole numbers such as `42` are expected; no `.0` suffix is required.
-- Say **wrong**, **incorrect**, or **mistake** during rest to flag the current rep. Say **stop** to end early.
+- Say **wrong**, **incorrect**, or **mistake** during rest to flag the current rep.
 - The app repeats for the configured rep count, defaulting to 10 reps.
 - Export structured CSV to `Downloads/GripRecorderData/`.
 - Select `left` or `right` for hand.
@@ -22,7 +21,7 @@ CSV files for Lodestone or another system to import and own as durable history.
 
 The timing loop is independent from speech recognition callbacks, so the pull/rest cadence keeps running even if recognition is slow or misses a value. Empty rest windows are marked as missed in the editable values list.
 
-Voice capture uses bundled Vosk recognition rather than Android's built-in Google recognizer. The app listens for command words and records values during rest phases with a number-focused grammar covering values from zero to two hundred, optional one-digit decimals, common fractional phrases, `kg`/`kilograms`, and the flag words.
+Voice capture uses bundled Vosk recognition rather than Android's built-in Google recognizer. The app records values during rest phases with a number-focused grammar covering values from zero to two hundred, optional one-digit decimals, common fractional phrases, `kg`/`kilograms`, and the flag words.
 
 CSV export uses one row per rep with session metadata repeated:
 
